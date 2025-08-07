@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>华巡网络设备巡检系统</title>
+    
+    <!-- 外部CSS库 -->
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    
+    <!-- 自定义CSS -->
+    <link rel="stylesheet" href="assets/css/main.css">
+</head>
+<body>
+    <div id="app" class="container">
+        <!-- 页头组件 -->
+        <div class="header">
+            <h1>华巡网络设备巡检系统</h1>
+            <div class="header-buttons">
+                <div class="current-time">
+                    <div class="date-time">{{ currentDateTime }}</div>
+                    <div class="lunar-week">{{ lunarInfo }} {{ weekDay }}</div>
+                </div>
+                <el-button type="success" @click="exportDevices">
+                    <i class="el-icon-download"></i> 导出设备
+                </el-button>
+                <el-button type="warning" @click="showImportDialog">
+                    <i class="el-icon-upload"></i> 导入设备
+                </el-button>
+                <el-button type="primary" @click="showAddDeviceDialog">添加设备</el-button>
+                <el-button type="info" @click="showInspectionLogs">
+                    <i class="el-icon-document"></i> 巡检日志
+                </el-button>
+            </div>
+        </div>
+
+        <!-- 设备管理组件 -->
+        <div class="device-list">
+            <h2>
+                设备管理
+                <div class="group-actions">
+                    <el-button type="text" @click="showGroupManager">管理分组</el-button>
+                </div>
+            </h2>
+            
+            <el-tabs v-model="activeDeviceGroupTab" type="card" class="tab-equal-width">
+                <el-tab-pane label="全部设备" name="all">
+                    <div style="margin-bottom: 15px;">
+                        <el-button type="danger" @click="batchInspectAllDevices" :disabled="selectedDevices.length === 0" size="small">
+                            批量巡检 ({{ selectedDevices.length }})
+                        </el-button>
+                    </div>
+                    
+                    <el-table 
+                        :data="paginatedDevices" 
+                        @selection-change="handleDeviceSelectionChange"
+                        class="compact-table"
+                        style="width: 100%"
+                        empty-text="暂无设备数据">
+                        <el-table-column type="selection" width="55"></el-table-column>
+                        <el-table-column prop="name" label="设备名称" min-width="120"></el-table-column>
+                        <el-table-column prop="ip" label="IP地址" min-width="120"></el-table-column>
+                        <el-table-column prop="device_type" label="设备类型" min-width="100"></el-table-column>
+                        <el-table-column prop="protocol" label="协议" width="70"></el-table-column>
+                        <el-table-column prop="group" label="分组" width="80"></el-table-column>
+                        <el-table-column label="状态" width="100">
+                            <template slot-scope="scope">
+                                <span :class="['status-badge', 'status-' + scope.row.status]">
+                                    {{ scope.row.status === 'online' ? '在线' : scope.row.status === 'offline' ? '离线' : '未知' }}
+                                </span>
+                                <div class="last-check" v-if="scope.row.last_check">
+                                    {{ formatDateTime(scope.row.last_check) }}
+                                </div>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="操作" min-width="160">
+                            <template slot-scope="scope">
+                                <div class="operation-buttons">
+                                    <el-button size="mini" @click="inspectDevice(scope.row)" :disabled="scope.row.status !== 'online'">
+                                        巡检
+                                    </el-button>
+                                    <el-button size="mini" @click="editDevice(scope.row)">编辑</el-button>
+                                    <el-button size="mini" type="danger" @click="deleteDevice(scope.row.id)">删除</el-button>
+                                </div>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                    
+                    <el-pagination
+                        @current-change="handleDevicePageChange"
+                        :current-page="currentPage"
+                        :page-size="pageSize"
+                        :total="devices.length"
+                        layout="prev, pager, next, total"
+                        style="margin-top: 20px; text-align: center;">
+                    </el-pagination>
+                </el-tab-pane>
+                
+                <el-tab-pane v-for="group in deviceGroups" :key="group" :label="group" :name="group">
+                    <div style="margin-bottom: 15px;">
+                        <el-button type="danger" @click="batchInspectGroupDevices(group)" :disabled="selectedGroupDevices.length === 0" size="small">
+                            批量巡检 ({{ selectedGroupDevices.length }})
+                        </el-button>
+                    </div>
+                    
+                    <el-table 
+                        :data="paginatedGroupDevices(group)" 
+                        @selection-change="handleGroupDeviceSelectionChange"
+                        class="compact-table"
+                        style="width: 100%"
+                        :empty-text="`暂无${group}设备`">
+                        <el-table-column type="selection" width="55"></el-table-column>
+                        <el-table-column prop="name" label="设备名称" min-width="120"></el-table-column>
+                        <el-table-column prop="ip" label="IP地址" min-width="120"></el-table-column>
+                        <el-table-column prop="device_type" label="设备类型" min-width="100"></el-table-column>
+                        <el-table-column prop="protocol" label="协议" width="70"></el-table-column>
+                        <el-table-column label="状态" width="100">
+                            <template slot-scope="scope">
+                                <span :class="['status-badge', 'status-' + scope.row.status]">
+                                    {{ scope.row.status === 'online' ? '在线' : scope.row.status === 'offline' ? '离线' : '未知' }}
+                                </span>
+                                <div class="last-check" v-if="scope.row.last_check">
+                                    {{ formatDateTime(scope.row.last_check) }}
+                                </div>
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="操作" min-width="160">
+                            <template slot-scope="scope">
+                                <div class="operation-buttons">
+                                    <el-button size="mini" @click="inspectDevice(scope.row)" :disabled="scope.row.status !== 'online'">
+                                        巡检
+                                    </el-button>
+                                    <el-button size="mini" @click="editDevice(scope.row)">编辑</el-button>
+                                    <el-button size="mini" type="danger" @click="deleteDevice(scope.row.id)">删除</el-button>
+                                </div>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                    
+                    <el-pagination
+                        @current-change="page => handleGroupPageChange(group, page)"
+                        :current-page="groupPages[group] || 1"
+                        :page-size="pageSize"
+                        :total="filterDevicesByGroup(group).length"
+                        layout="prev, pager, next, total"
+                        style="margin-top: 20px; text-align: center;">
+                    </el-pagination>
+                </el-tab-pane>
+            </el-tabs>
+        </div>
+
+        <!-- 巡检记录组件 -->
+        <div class="inspection-records">
+            <h2>巡检记录</h2>
+            <el-table :data="paginatedRecords" style="width: 100%" class="compact-table">
+                <el-table-column type="selection" @selection-change="handleRecordSelectionChange" width="55"></el-table-column>
+                <el-table-column prop="device_name" label="设备名称" width="150"></el-table-column>
+                <el-table-column prop="created_at" label="巡检时间" width="180">
+                    <template slot-scope="scope">
+                        {{ formatDateTime(scope.row.created_at) }}
+                    </template>
+                </el-table-column>
+                <el-table-column label="操作" width="200">
+                    <template slot-scope="scope">
+                        <div class="operation-buttons">
+                            <el-button size="mini" @click="showResult(scope.row)">查看</el-button>
+                            <el-button size="mini" type="success" @click="exportRecord(scope.row.id)">导出</el-button>
+                            <el-button size="mini" type="danger" @click="deleteRecord(scope.row.id)">删除</el-button>
+                        </div>
+                    </template>
+                </el-table-column>
+            </el-table>
+            
+            <div style="margin-top: 15px; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <el-button type="success" @click="batchExportRecords" :disabled="selectedRecords.length === 0" size="small">
+                        批量导出 ({{ selectedRecords.length }})
+                    </el-button>
+                </div>
+                <el-pagination
+                    @current-change="handleRecordPageChange"
+                    :current-page="recordCurrentPage"
+                    :page-size="recordPageSize"
+                    :total="inspectionRecords.length"
+                    layout="prev, pager, next, total">
+                </el-pagination>
+            </div>
+        </div>
+
+        <!-- 对话框组件将在这里包含 -->
+        <!-- 设备添加/编辑对话框 -->
+        <!-- 巡检结果对话框 -->
+        <!-- 导入设备对话框 -->
+        <!-- 分组管理对话框 -->
+        <!-- 巡检日志对话框 -->
+        <!-- 巡检进度对话框 -->
+
+        <!-- 页脚 -->
+        <div class="footer">
+            <div class="footer-content">
+                <div class="footer-logo">华巡网络设备巡检系统</div>
+                <div class="footer-divider"></div>
+                <div class="footer-copyright">© {{ currentYear }} Huaxuncheck. 基于 MIT 协议开源</div>
+                <div class="footer-links">
+                    <a href="https://github.com/2lodoss/Huaxuncheck" target="_blank">GitHub</a>
+                    <a href="mailto:1937305367@qq.com">联系我们</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- 巡检进度覆盖层 -->
+        <div v-if="inspectionInProgress" class="inspection-progress">
+            <div class="inspection-progress-content">
+                <div class="inspection-icon">
+                    <i class="el-icon-loading"></i>
+                </div>
+                <div class="progress-title">
+                    {{ batchInspecting ? '批量巡检进行中...' : '设备巡检进行中...' }}
+                </div>
+                <div v-if="batchInspecting" class="progress-info">
+                    <div>当前设备: {{ currentInspectingDevice ? currentInspectingDevice.name : '准备中...' }}</div>
+                    <div>进度: {{ completedInspections }}/{{ totalInspections }}</div>
+                    <el-progress :percentage="inspectionProgress" style="margin-top: 15px;"></el-progress>
+                </div>
+                <div v-else class="progress-info">
+                    <div>设备: {{ currentInspectingDevice ? currentInspectingDevice.name : '准备中...' }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- JavaScript库 -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    
+    <!-- 工具函数 -->
+    <script src="utils/datetime.js"></script>
+    <script src="utils/validation.js"></script>
+    
+    <!-- 服务层 -->
+    <script src="services/api.js"></script>
+    <script src="services/device-service.js"></script>
+    <script src="services/inspection-service.js"></script>
+    
+    <!-- 主应用 -->
+    <script src="assets/js/app.js"></script>
+</body>
+</html>
